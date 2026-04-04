@@ -1,0 +1,13 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+logs/
+tmp/
+node_modules/
+*.mp3
+*.m4a
+*.aiff
+*.wav
+*.mp4
+*.mov

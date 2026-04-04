@@ -1,0 +1,13 @@
+{
+  "name": "c2e-slack-tts",
+  "version": "1.0.0",
+  "description": "Edge TTS CLI wrapper for c2e Slack bot",
+  "main": "tts-converter.js",
+  "scripts": {
+    "tts": "node tts-converter.js"
+  },
+  "dependencies": {
+    "commander": "^11.0.0",
+    "node-edge-tts": "^2.0.0"
+  }
+}
