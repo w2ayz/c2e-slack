@@ -16,16 +16,58 @@ No cloud AI APIs required. Everything runs locally.
 
 ## Usage
 
-### `/c2e <Chinese text>`
-Translates the text and uploads an English voice MP3 + text reply.
+### Text input
 
-### `/c2e` (after uploading a file)
-Because Slack slash commands cannot carry binary files directly, upload your audio/video first, then run `/c2e`. The bot finds your most recent media file in the channel and processes it.
+```
+/c2e 你好，今天天气怎么样？
+```
+
+Translates the Chinese text via Ollama and uploads an English voice MP3 + text reply.
+
+### Audio / video input (standard)
+
+```
+/c2e
+```
+
+Upload your audio or video file first, then run `/c2e` with no arguments. Because Slack slash commands cannot carry binary files directly, the bot finds your most recent media file in the channel and runs the full pipeline:
+
+```
+Whisper (transcribe) → Ollama (translate) → Edge TTS → Slack
+```
+
+### Audio / video input (fast mode)
+
+```
+/c2e --fast
+```
+
+Upload your audio or video file first, then run `/c2e --fast`. Skips Ollama entirely — Whisper translates directly to English in one step:
+
+```
+Whisper (transcribe + translate) → Edge TTS → Slack
+```
+
+Faster, but translation quality is lower than the standard pipeline. Does not work with text input.
 
 ### Event-driven (automatic)
-The bot also listens on `message` and `file_shared` events — upload audio/video directly and it processes automatically.
 
-**Supported media:** `.m4a`, `.mp3`, `.wav`, `.mp4`, `.mov`, `.aac`, `.ogg`, `.webm` and any `audio/*` or `video/*` MIME type.
+The bot also listens on `message` and `file_shared` events — upload audio/video to a channel the bot is in and it processes automatically using the standard pipeline (no slash command needed).
+
+### Supported media
+
+`.m4a` `.mp3` `.wav` `.mp4` `.mov` `.aac` `.ogg` `.webm` and any `audio/*` or `video/*` MIME type.
+
+### Mode comparison
+
+| | `/c2e <text>` | `/c2e` (audio) | `/c2e --fast` (audio) |
+|---|---|---|---|
+| Input | Chinese text | Audio / video | Audio / video |
+| Transcription | — | Whisper | Whisper |
+| Translation | Ollama LLM | Ollama LLM | Whisper built-in |
+| Voice output | Edge TTS | Edge TTS | Edge TTS |
+| Speed | Fast | Slower | Faster |
+| Translation quality | High | High | Lower |
 
 ## Local stack
 
@@ -138,7 +180,7 @@ In your Slack app settings → Slash Commands → Create New Command:
 |-------|-------|
 | Command | `/c2e` |
 | Short Description | Convert Chinese text or audio to English |
-| Usage Hint | `[Chinese text]` |
+| Usage Hint | `[Chinese text] [--fast]` |
 
 ## File structure
 
