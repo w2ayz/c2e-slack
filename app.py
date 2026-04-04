@@ -120,14 +120,14 @@ def find_recent_user_audio_file(channel_id: str, user_id: str) -> Optional[dict]
     return None
 
 
-def transcribe_audio(audio_path: Path) -> str:
+def transcribe_audio(audio_path: Path, task: str = "transcribe") -> str:
     run_cmd([
         WHISPER_BIN,
         str(audio_path),
         "--model",
         "turbo",
         "--task",
-        "transcribe",
+        task,
         "--output_format",
         "txt",
         "--output_dir",
@@ -146,7 +146,7 @@ def download_slack_file(url: str, out_path: Path):
     out_path.write_bytes(r.content)
 
 
-def process_slack_audio_file(slack_file: dict, channel: str, thread_ts: Optional[str] = None):
+def process_slack_audio_file(slack_file: dict, channel: str, thread_ts: Optional[str] = None, fast: bool = False):
     if not is_media_with_audio(slack_file):
         return False
 
@@ -154,11 +154,12 @@ def process_slack_audio_file(slack_file: dict, channel: str, thread_ts: Optional
 
     file_id = slack_file.get("id", "unknown")
     file_name = slack_file.get("name", file_id)
-    logger.info("Processing file id=%s name=%s channel=%s", file_id, file_name, channel)
+    mode_label = "transcribe → English voice (fast)" if fast else "transcribe → translate → English voice"
+    logger.info("Processing file id=%s name=%s channel=%s fast=%s", file_id, file_name, channel, fast)
 
     post_kwargs = {
         "channel": channel,
-        "text": f"Got it — processing `{file_name}` now (transcribe → translate → English voice)...",
+        "text": f"Got it — processing `{file_name}` now ({mode_label})...",
     }
     if thread_ts:
         post_kwargs["thread_ts"] = thread_ts
@@ -168,8 +169,12 @@ def process_slack_audio_file(slack_file: dict, channel: str, thread_ts: Optional
     download_slack_file(slack_file["url_private_download"], local_audio)
     logger.info("Downloaded source media to %s", local_audio)
 
-    zh = transcribe_audio(local_audio)
-    en = translate_zh_to_en(zh)
+    if fast:
+        en = transcribe_audio(local_audio, task="translate")
+    else:
+        zh = transcribe_audio(local_audio, task="transcribe")
+        en = translate_zh_to_en(zh)
+
     out_mp3 = TMP_DIR / f"{file_id}_en.mp3"
     tts_edge(en, out_mp3)
 
@@ -183,7 +188,7 @@ def process_slack_audio_file(slack_file: dict, channel: str, thread_ts: Optional
         upload_kwargs["thread_ts"] = thread_ts
     app.client.files_upload_v2(**upload_kwargs)
 
-    logger.info("Uploaded English voice file for id=%s to channel=%s", file_id, channel)
+    logger.info("Uploaded English voice file for id=%s to channel=%s fast=%s", file_id, channel, fast)
     return True
 
 
@@ -221,17 +226,27 @@ def media_extension(slack_file: dict) -> str:
 @app.command("/c2e")
 def c2e_command(ack, respond, command):
     ack()
-    zh = (command.get("text") or "").strip()
-    logger.info("/c2e invoked by user=%s channel=%s has_text=%s", command.get("user_id"), command.get("channel_id"), bool(zh))
+    raw = (command.get("text") or "").strip()
+
+    # Parse --fast flag
+    fast = "--fast" in raw
+    zh = raw.replace("--fast", "").strip()
+
+    logger.info("/c2e invoked by user=%s channel=%s fast=%s has_text=%s",
+                command.get("user_id"), command.get("channel_id"), fast, bool(zh))
     try:
         if not zh:
             # Slash commands cannot directly carry binary file uploads.
             # Fallback: grab the user's most recent audio/video file in channel.
             f = find_recent_user_audio_file(command["channel_id"], command["user_id"])
             if not f:
-                respond("No recent audio/video file found. Upload a file, then run /c2e again (or use /c2e <Chinese text>).")
+                respond("No recent audio/video file found. Upload a file, then run `/c2e` again (or use `/c2e <Chinese text>`).")
                 return
-            process_slack_audio_file(f, channel=command["channel_id"], thread_ts=None)
+            process_slack_audio_file(f, channel=command["channel_id"], thread_ts=None, fast=fast)
+            return
+
+        if fast:
+            respond("`--fast` requires audio input — Whisper can only translate audio, not text. Use `/c2e <Chinese text>` (without `--fast`) for text input.")
             return
 
         en = translate_zh_to_en(zh)
