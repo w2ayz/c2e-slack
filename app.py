@@ -233,15 +233,15 @@ def media_extension(slack_file: dict) -> str:
 def handle_dm_messages(body, say):
     event = body.get("event", {})
 
-    # Only handle DMs; ignore bot messages and message edits/deletes
-    if event.get("channel_type") != "im":
+    # Only handle DMs (channel IDs starting with "D"); ignore bot messages and edits
+    channel = event.get("channel", "")
+    if not channel.startswith("D"):
         return
     if event.get("bot_id"):
         return
     if event.get("subtype") in ("bot_message", "message_changed", "message_deleted"):
         return
 
-    channel = event.get("channel")
     ts = event.get("ts", "")
     user = event.get("user", "unknown")
 
