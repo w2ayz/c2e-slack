@@ -16,61 +16,56 @@ No cloud AI APIs required. Everything runs locally.
 
 ## Usage
 
-### Text input
+### Behavior by context
+
+**DM with c2e app — no command needed:**
+
+| Input | Trigger | Response |
+|-------|---------|----------|
+| Send Chinese text | Automatic | English text + voice MP3 in Chat |
+| Upload voice/audio file | Automatic | English text + voice MP3 in Chat |
+
+**In a channel:**
+
+| Input | Trigger | Response |
+|-------|---------|----------|
+| Upload voice/audio file | `/c2e` after upload | Processes most recent audio file |
+| Upload voice/audio file | `/c2e --fast` after upload | Same, skips Ollama (faster) |
+| Chinese text | `/c2e <text>` | English text + voice MP3 |
+
+### `/c2e <Chinese text>` — text input
 
 ```
 /c2e 你好，今天天气怎么样？
 ```
 
-Translates the Chinese text via Ollama and uploads an English voice MP3 + text reply.
+Translates Chinese text via Ollama and replies with English text + voice MP3.
 
-### Audio / video input (standard)
+### `/c2e` — audio input (standard)
 
-```
-/c2e
-```
-
-Upload your audio or video file first, then run `/c2e` with no arguments. Because Slack slash commands cannot carry binary files directly, the bot finds your most recent media file in the channel and runs the full pipeline:
+Upload your audio or video file first, then run `/c2e`. The bot finds your most recent media file in the channel:
 
 ```
 Whisper (transcribe) → Ollama (translate) → Edge TTS → Slack
 ```
 
-### Audio / video input (fast mode)
+### `/c2e --fast` — audio input (fast mode)
 
 ```
 /c2e --fast
 ```
 
-Upload your audio or video file first, then run `/c2e --fast`. Skips Ollama entirely — Whisper translates directly to English in one step:
+Skips Ollama — Whisper translates directly to English in one step:
 
 ```
 Whisper (transcribe + translate) → Edge TTS → Slack
 ```
 
-Faster, but translation quality is lower than the standard pipeline. Does not work with text input.
-
-### DM — no command needed
-
-In a direct message with the bot, just send text or a voice/audio file directly — no slash command or mention required:
-
-- **Send Chinese text** → bot replies with English text + voice MP3
-- **Upload audio/video** → bot transcribes, translates, and replies with English text + voice MP3
+Faster but lower translation quality. Does not work with text input.
 
 ### Supported media
 
 `.m4a` `.mp3` `.wav` `.mp4` `.mov` `.aac` `.ogg` `.webm` and any `audio/*` or `video/*` MIME type.
-
-### Mode comparison
-
-| | `/c2e <text>` | `/c2e` (audio) | `/c2e --fast` (audio) |
-|---|---|---|---|
-| Input | Chinese text | Audio / video | Audio / video |
-| Transcription | — | Whisper | Whisper |
-| Translation | Ollama LLM | Ollama LLM | Whisper built-in |
-| Voice output | Edge TTS | Edge TTS | Edge TTS |
-| Speed | Fast | Slower | Faster |
-| Translation quality | High | High | Lower |
 
 ## Local stack
 
