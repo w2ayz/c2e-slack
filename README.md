@@ -214,3 +214,31 @@ The LLM prompt supports four modes (pass via future `/c2e --mode` flag or extend
 | Blank translation | Check Ollama is running: `ollama list` |
 | Whisper not found | Check `WHISPER_BIN` env var or run `which whisper` |
 | Scopes error | Reinstall Slack app after adding scopes |
+
+## Changelog
+
+### v1.2.0
+- Add `_processing` dedup set — prevents duplicate Slack events from racing two Whisper processes
+- Add `_whisper_lock` — serializes Whisper calls to prevent CPU/RAM overload
+- Whisper logs exit code, stdout, stderr for easier debugging
+- `find_recent_user_audio_file` returns `(file, msg_ts)` tuple — `/c2e` reply now threads under the original upload
+- DM handler: dual check (`channel_type` + `D`-prefix), explicit `file_share` subtype allow, `break` after first audio file
+- `handle_file_shared_events` explicit noop stub — no Slack Bolt unhandled-event warnings
+- `logger.exception` in all error paths — full tracebacks written to log file
+
+### v1.1.0
+- DM auto-trigger: text and audio processed automatically, no command needed
+- DM responses post to Chat tab via legacy `files.upload`
+- Channels: require `/c2e` or `/c2e --fast` to trigger (no auto-processing)
+- Added `--fast` mode: Whisper `--task translate` skips Ollama
+- Fixed DM detection via channel ID `D`-prefix
+- Fixed `file_share` subtype filter (iOS voice memos previously missed)
+
+### v1.0.1
+- Added full usage instructions and mode comparison table to README
+- Updated slash command usage hint to include `--fast`
+
+### v1.0.0
+- Initial release: `/c2e` slash command, audio file processing, `--fast` mode
+- Local pipeline: Whisper → Ollama → Edge TTS
+- Socket Mode — no public URL required
