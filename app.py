@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import subprocess
+import threading
 import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -52,6 +53,9 @@ root_logger.addHandler(file_handler)
 
 app = App(token=SLACK_BOT_TOKEN)
 logger = logging.getLogger("c2e")
+
+_processing: set[str] = set()       # dedup: file IDs currently being processed
+_whisper_lock = threading.Lock()    # one Whisper process at a time (CPU/RAM limit)
 
 
 def run_cmd(cmd: list[str]) -> str:
@@ -109,33 +113,30 @@ def tts_edge(text: str, out_mp3: Path) -> Path:
     return out_mp3
 
 
-def find_recent_user_audio_file(channel_id: str, user_id: str) -> Optional[dict]:
+def find_recent_user_audio_file(channel_id: str, user_id: str) -> Optional[tuple[dict, str]]:
+    """Return (file, msg_ts) of the most recent audio file posted by user, or None."""
     history = app.client.conversations_history(channel=channel_id, limit=15)
     for msg in history.get("messages", []):
         if msg.get("user") != user_id:
             continue
         for f in msg.get("files", []):
             if is_media_with_audio(f):
-                return f
+                return f, msg.get("ts")
     return None
 
 
 def transcribe_audio(audio_path: Path, task: str = "transcribe") -> str:
-    run_cmd([
-        WHISPER_BIN,
-        str(audio_path),
-        "--model",
-        "turbo",
-        "--task",
-        task,
-        "--output_format",
-        "txt",
-        "--output_dir",
-        str(TMP_DIR),
-    ])
+    cmd = [WHISPER_BIN, str(audio_path), "--model", "turbo", "--task", task,
+           "--output_format", "txt", "--output_dir", str(TMP_DIR)]
+    with _whisper_lock:
+        p = subprocess.run(cmd, capture_output=True, text=True)
+        logger.info("Whisper exit=%s stdout=%r stderr=%r",
+                    p.returncode, p.stdout[:300], p.stderr[:300])
+        if p.returncode != 0:
+            raise RuntimeError(p.stderr.strip() or "whisper failed")
     txt_path = TMP_DIR / f"{audio_path.stem}.txt"
     if not txt_path.exists():
-        raise RuntimeError("transcript file not found")
+        raise RuntimeError(f"transcript file not found (stdout={p.stdout[:200]!r})")
     return txt_path.read_text(encoding="utf-8").strip()
 
 
@@ -146,16 +147,31 @@ def download_slack_file(url: str, out_path: Path):
     out_path.write_bytes(r.content)
 
 
-def process_slack_audio_file(slack_file: dict, channel: str, thread_ts: Optional[str] = None, fast: bool = False, is_dm: bool = False):
+def process_slack_audio_file(slack_file: dict, channel: str, thread_ts: Optional[str] = None,
+                              fast: bool = False, is_dm: bool = False):
     if not is_media_with_audio(slack_file):
         return False
 
+    file_id = slack_file.get("id", "unknown")
+    if file_id in _processing:
+        logger.info("Skipping duplicate event for file id=%s", file_id)
+        return False
+    _processing.add(file_id)
+
+    try:
+        return _do_process_slack_audio_file(slack_file, file_id, channel, thread_ts, fast, is_dm)
+    finally:
+        _processing.discard(file_id)
+
+
+def _do_process_slack_audio_file(slack_file: dict, file_id: str, channel: str,
+                                  thread_ts: Optional[str], fast: bool, is_dm: bool):
     cleanup_tmp_dir()
 
-    file_id = slack_file.get("id", "unknown")
     file_name = slack_file.get("name", file_id)
     mode_label = "transcribe → English voice (fast)" if fast else "transcribe → translate → English voice"
-    logger.info("Processing file id=%s name=%s channel=%s fast=%s is_dm=%s", file_id, file_name, channel, fast, is_dm)
+    logger.info("Processing file id=%s name=%s channel=%s fast=%s is_dm=%s",
+                file_id, file_name, channel, fast, is_dm)
 
     post_kwargs = {
         "channel": channel,
@@ -238,14 +254,20 @@ def media_extension(slack_file: dict) -> str:
 @app.event("message")
 def handle_dm_messages(body, say):
     event = body.get("event", {})
-
-    # Only handle DMs (channel IDs starting with "D"); ignore bot messages and edits
     channel = event.get("channel", "")
-    if not channel.startswith("D"):
+    channel_type = event.get("channel_type")
+
+    logger.debug("message event: channel=%s channel_type=%s subtype=%s files=%s",
+                 channel, channel_type, event.get("subtype"), len(event.get("files", [])))
+
+    # Only handle DMs — require both channel_type and D-prefix as dual check
+    if channel_type != "im" or not channel.startswith("D"):
         return
     if event.get("bot_id"):
         return
-    if event.get("subtype") in ("bot_message", "message_changed", "message_deleted"):
+    # Allow file_share subtype (iOS voice memos); block edits and deletions
+    subtype = event.get("subtype")
+    if subtype and subtype != "file_share":
         return
 
     ts = event.get("ts", "")
@@ -255,16 +277,16 @@ def handle_dm_messages(body, say):
     files = event.get("files", [])
     if files:
         for f in files:
-            try:
-                handled = process_slack_audio_file(f, channel=channel, thread_ts=None, is_dm=True)
-                if not handled:
-                    continue
-            except Exception as e:
-                logger.exception("DM audio processing failed")
-                say(f"C2E failed: {e}")
+            if is_media_with_audio(f):
+                try:
+                    process_slack_audio_file(f, channel=channel, thread_ts=None, is_dm=True)
+                except Exception as e:
+                    logger.exception("DM audio processing failed for file %s", f.get("id"))
+                    say(f"C2E failed: {e}")
+                break  # process only first audio file
         return
 
-    # Plain text message in DM — post result via chat_postMessage so it appears in Chat tab
+    # Plain text message in DM — translate and respond in Chat tab
     zh = (event.get("text") or "").strip()
     if not zh:
         return
@@ -287,6 +309,12 @@ def handle_dm_messages(body, say):
         say(f"C2E failed: {e}")
 
 
+@app.event("file_shared")
+def handle_file_shared_events(body, logger):
+    # Automatic processing disabled — use /c2e to trigger manually in channels.
+    pass
+
+
 @app.command("/c2e")
 def c2e_command(ack, respond, command):
     ack()
@@ -302,11 +330,12 @@ def c2e_command(ack, respond, command):
         if not zh:
             # Slash commands cannot directly carry binary file uploads.
             # Fallback: grab the user's most recent audio/video file in channel.
-            f = find_recent_user_audio_file(command["channel_id"], command["user_id"])
-            if not f:
+            result = find_recent_user_audio_file(command["channel_id"], command["user_id"])
+            if not result:
                 respond("No recent audio/video file found. Upload a file, then run `/c2e` again (or use `/c2e <Chinese text>`).")
                 return
-            process_slack_audio_file(f, channel=command["channel_id"], thread_ts=None, fast=fast)
+            f, msg_ts = result
+            process_slack_audio_file(f, channel=command["channel_id"], thread_ts=msg_ts, fast=fast)
             return
 
         if fast:
@@ -323,8 +352,8 @@ def c2e_command(ack, respond, command):
             initial_comment=f"English text:\n{en}",
         )
     except Exception as e:
+        logger.exception("c2e_command failed")
         respond(f"C2E failed: {e}")
-
 
 
 if __name__ == "__main__":
