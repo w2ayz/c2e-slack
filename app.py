@@ -236,23 +236,23 @@ def handle_dm_messages(body, say):
         return
 
     channel = event.get("channel")
-    thread_ts = event.get("ts")
+    ts = event.get("ts", "")
     user = event.get("user", "unknown")
 
-    # Audio/video file uploaded in DM
+    # Audio/video file uploaded in DM — respond in main chat (no thread)
     files = event.get("files", [])
     if files:
         for f in files:
             try:
-                handled = process_slack_audio_file(f, channel=channel, thread_ts=thread_ts)
+                handled = process_slack_audio_file(f, channel=channel, thread_ts=None)
                 if not handled:
                     continue
             except Exception as e:
                 logger.exception("DM audio processing failed")
-                say(f"C2E failed: {e}", thread_ts=thread_ts)
+                say(f"C2E failed: {e}")
         return
 
-    # Plain text message in DM
+    # Plain text message in DM — respond in main chat (no thread)
     zh = (event.get("text") or "").strip()
     if not zh:
         return
@@ -260,7 +260,7 @@ def handle_dm_messages(body, say):
     logger.info("DM text from user=%s channel=%s", user, channel)
     try:
         en = translate_zh_to_en(zh)
-        out_mp3 = TMP_DIR / f"dm_{user}_{thread_ts.replace('.', '_')}.mp3"
+        out_mp3 = TMP_DIR / f"dm_{user}_{ts.replace('.', '_')}.mp3"
         tts_edge(en, out_mp3)
         app.client.files_upload_v2(
             channel=channel,
