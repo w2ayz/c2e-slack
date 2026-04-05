@@ -146,7 +146,7 @@ def download_slack_file(url: str, out_path: Path):
     out_path.write_bytes(r.content)
 
 
-def process_slack_audio_file(slack_file: dict, channel: str, thread_ts: Optional[str] = None, fast: bool = False):
+def process_slack_audio_file(slack_file: dict, channel: str, thread_ts: Optional[str] = None, fast: bool = False, is_dm: bool = False):
     if not is_media_with_audio(slack_file):
         return False
 
@@ -155,7 +155,7 @@ def process_slack_audio_file(slack_file: dict, channel: str, thread_ts: Optional
     file_id = slack_file.get("id", "unknown")
     file_name = slack_file.get("name", file_id)
     mode_label = "transcribe → English voice (fast)" if fast else "transcribe → translate → English voice"
-    logger.info("Processing file id=%s name=%s channel=%s fast=%s", file_id, file_name, channel, fast)
+    logger.info("Processing file id=%s name=%s channel=%s fast=%s is_dm=%s", file_id, file_name, channel, fast, is_dm)
 
     post_kwargs = {
         "channel": channel,
@@ -178,15 +178,21 @@ def process_slack_audio_file(slack_file: dict, channel: str, thread_ts: Optional
     out_mp3 = TMP_DIR / f"{file_id}_en.mp3"
     tts_edge(en, out_mp3)
 
-    upload_kwargs = {
-        "channel": channel,
-        "file": str(out_mp3),
-        "title": "C2E English Voice",
-        "initial_comment": f"English text:\n{en}",
-    }
-    if thread_ts:
-        upload_kwargs["thread_ts"] = thread_ts
-    app.client.files_upload_v2(**upload_kwargs)
+    if is_dm:
+        # In DMs: post English text via chat_postMessage so it appears in Chat tab,
+        # then upload the MP3 separately (it will appear in History/Files).
+        app.client.chat_postMessage(channel=channel, text=f"English text:\n{en}")
+        app.client.files_upload_v2(channel=channel, file=str(out_mp3), title="C2E English Voice")
+    else:
+        upload_kwargs = {
+            "channel": channel,
+            "file": str(out_mp3),
+            "title": "C2E English Voice",
+            "initial_comment": f"English text:\n{en}",
+        }
+        if thread_ts:
+            upload_kwargs["thread_ts"] = thread_ts
+        app.client.files_upload_v2(**upload_kwargs)
 
     logger.info("Uploaded English voice file for id=%s to channel=%s fast=%s", file_id, channel, fast)
     return True
@@ -239,12 +245,12 @@ def handle_dm_messages(body, say):
     ts = event.get("ts", "")
     user = event.get("user", "unknown")
 
-    # Audio/video file uploaded in DM — respond in main chat (no thread)
+    # Audio/video file uploaded in DM
     files = event.get("files", [])
     if files:
         for f in files:
             try:
-                handled = process_slack_audio_file(f, channel=channel, thread_ts=None)
+                handled = process_slack_audio_file(f, channel=channel, thread_ts=None, is_dm=True)
                 if not handled:
                     continue
             except Exception as e:
@@ -252,7 +258,7 @@ def handle_dm_messages(body, say):
                 say(f"C2E failed: {e}")
         return
 
-    # Plain text message in DM — respond in main chat (no thread)
+    # Plain text message in DM — post result via chat_postMessage so it appears in Chat tab
     zh = (event.get("text") or "").strip()
     if not zh:
         return
@@ -262,12 +268,8 @@ def handle_dm_messages(body, say):
         en = translate_zh_to_en(zh)
         out_mp3 = TMP_DIR / f"dm_{user}_{ts.replace('.', '_')}.mp3"
         tts_edge(en, out_mp3)
-        app.client.files_upload_v2(
-            channel=channel,
-            file=str(out_mp3),
-            title="C2E English Voice",
-            initial_comment=f"English text:\n{en}",
-        )
+        app.client.chat_postMessage(channel=channel, text=f"English text:\n{en}")
+        app.client.files_upload_v2(channel=channel, file=str(out_mp3), title="C2E English Voice")
     except Exception as e:
         logger.exception("DM text processing failed")
         say(f"C2E failed: {e}")
