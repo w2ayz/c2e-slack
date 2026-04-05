@@ -223,6 +223,54 @@ def media_extension(slack_file: dict) -> str:
     return ".m4a"
 
 
+@app.event("message")
+def handle_dm_messages(body, say):
+    event = body.get("event", {})
+
+    # Only handle DMs; ignore bot messages and message edits
+    if event.get("channel_type") != "im":
+        return
+    if event.get("bot_id") or event.get("subtype"):
+        return
+
+    channel = event.get("channel")
+    thread_ts = event.get("ts")
+    user = event.get("user", "unknown")
+
+    # Audio/video file uploaded in DM
+    files = event.get("files", [])
+    if files:
+        for f in files:
+            try:
+                handled = process_slack_audio_file(f, channel=channel, thread_ts=thread_ts)
+                if not handled:
+                    continue
+            except Exception as e:
+                logger.exception("DM audio processing failed")
+                say(f"C2E failed: {e}", thread_ts=thread_ts)
+        return
+
+    # Plain text message in DM
+    zh = (event.get("text") or "").strip()
+    if not zh:
+        return
+
+    logger.info("DM text from user=%s channel=%s", user, channel)
+    try:
+        en = translate_zh_to_en(zh)
+        out_mp3 = TMP_DIR / f"dm_{user}_{thread_ts.replace('.', '_')}.mp3"
+        tts_edge(en, out_mp3)
+        app.client.files_upload_v2(
+            channel=channel,
+            file=str(out_mp3),
+            title="C2E English Voice",
+            initial_comment=f"English text:\n{en}",
+        )
+    except Exception as e:
+        logger.exception("DM text processing failed")
+        say(f"C2E failed: {e}")
+
+
 @app.command("/c2e")
 def c2e_command(ack, respond, command):
     ack()

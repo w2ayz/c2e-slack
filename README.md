@@ -50,9 +50,12 @@ Whisper (transcribe + translate) → Edge TTS → Slack
 
 Faster, but translation quality is lower than the standard pipeline. Does not work with text input.
 
-### Event-driven (automatic)
+### DM — no command needed
 
-The bot also listens on `message` and `file_shared` events — upload audio/video to a channel the bot is in and it processes automatically using the standard pipeline (no slash command needed).
+In a direct message with the bot, just send text or a voice/audio file directly — no slash command or mention required:
+
+- **Send Chinese text** → bot replies with English text + voice MP3
+- **Upload audio/video** → bot transcribes, translates, and replies with English text + voice MP3
 
 ### Supported media
 
@@ -158,11 +161,13 @@ oauth_config:
       - files:write
       - channels:history
       - groups:history
+      - im:history
 settings:
   event_subscriptions:
     bot_events:
       - message.channels
       - message.groups
+      - message.im
       - file_shared
   interactivity:
     is_enabled: true
