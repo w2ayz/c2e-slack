@@ -262,42 +262,6 @@ def c2e_command(ack, respond, command):
         respond(f"C2E failed: {e}")
 
 
-@app.event("message")
-def handle_message_events(body, say, logger):
-    event = body.get("event", {})
-    logger.info("message event received channel=%s files=%s", event.get("channel"), len(event.get("files", [])))
-    files = event.get("files", [])
-    if not files:
-        return
-    for f in files:
-        try:
-            handled = process_slack_audio_file(
-                f,
-                channel=event["channel"],
-                thread_ts=event.get("ts"),
-            )
-            if not handled:
-                continue
-        except Exception as e:
-            logger.exception("c2e audio processing failed (message event)")
-            say(f"C2E failed: {e}", thread_ts=event.get("ts"))
-
-
-@app.event("file_shared")
-def handle_file_shared_events(body, logger):
-    event = body.get("event", {})
-    logger.info("file_shared event received file_id=%s channel=%s", event.get("file_id"), event.get("channel_id"))
-    file_id = event.get("file_id")
-    channel_id = event.get("channel_id")
-    if not file_id or not channel_id:
-        return
-
-    try:
-        file_obj = app.client.files_info(file=file_id)["file"]
-        process_slack_audio_file(file_obj, channel=channel_id, thread_ts=None)
-    except Exception:
-        logger.exception("c2e audio processing failed (file_shared event)")
-
 
 if __name__ == "__main__":
     if not SLACK_BOT_TOKEN or not SLACK_APP_TOKEN:
