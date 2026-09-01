@@ -195,16 +195,12 @@ def _do_process_slack_audio_file(slack_file: dict, file_id: str, channel: str,
     tts_edge(en, out_mp3)
 
     if is_dm:
-        # In DMs: use legacy files.upload which posts as a regular chat message
-        # (stays in Chat tab). files_upload_v2 always creates a History entry.
-        with open(str(out_mp3), "rb") as f:
-            app.client.files_upload(
-                channels=channel,
-                file=f,
-                filename="c2e_english.mp3",
-                title="C2E English Voice",
-                initial_comment=f"English text:\n{en}",
-            )
+        app.client.files_upload_v2(
+            channel=channel,
+            file=str(out_mp3),
+            title="C2E English Voice",
+            initial_comment=f"English text:\n{en}",
+        )
     else:
         upload_kwargs = {
             "channel": channel,
@@ -296,14 +292,12 @@ def handle_dm_messages(body, say):
         en = translate_zh_to_en(zh)
         out_mp3 = TMP_DIR / f"dm_{user}_{ts.replace('.', '_')}.mp3"
         tts_edge(en, out_mp3)
-        with open(str(out_mp3), "rb") as f:
-            app.client.files_upload(
-                channels=channel,
-                file=f,
-                filename="c2e_english.mp3",
-                title="C2E English Voice",
-                initial_comment=f"English text:\n{en}",
-            )
+        app.client.files_upload_v2(
+            channel=channel,
+            file=str(out_mp3),
+            title="C2E English Voice",
+            initial_comment=f"English text:\n{en}",
+        )
     except Exception as e:
         logger.exception("DM text processing failed")
         say(f"C2E failed: {e}")
@@ -353,7 +347,11 @@ def c2e_command(ack, respond, command):
         )
     except Exception as e:
         logger.exception("c2e_command failed")
-        respond(f"C2E failed: {e}")
+        msg = str(e)
+        if "not_in_channel" in msg:
+            respond("C2E bot isn't in this channel yet. Run `/invite @c2e` to add it, then try again.")
+        else:
+            respond(f"C2E failed: {e}")
 
 
 if __name__ == "__main__":
